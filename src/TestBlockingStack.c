@@ -17,7 +17,9 @@
 
 
 #define DEFAULT_MAX_STACK_SIZE 20
-#define THREAD_TEST_DELAY_US 50000
+#define THREAD_TEST_DELAY_US 1000
+#define READER_THREAD_COUNT 3
+#define READER_ITERATIONS 200
 
 /*
  * The stack to use during tests.
@@ -39,7 +41,7 @@ typedef struct {
 typedef struct {
 	BlockingStack *stack;
 	void *element;
-	volatile int completed;
+	int completed;
 	bool result;
 } PushThreadArgs;
 
@@ -48,9 +50,20 @@ typedef struct {
  */
 typedef struct {
 	BlockingStack *stack;
-	volatile int completed;
+	int completed;
 	void *result;
 } PopThreadArgs;
+
+
+typedef struct {
+	BlockingStack *stack;
+	int *startFlag;
+	int iterations;
+	int expectedSize;
+	bool expectedEmpty;
+	int failed;
+} ReadOnlyThreadArgs;
+
 
 /*
  * The number of tests that succeeded.
@@ -116,6 +129,33 @@ static void *popThreadMain(void *arg) {
 	return NULL;
 }
 
+static void waitForThreadStart(int *startFlag) {
+	while (!(*startFlag)) {
+		usleep(THREAD_TEST_DELAY_US);
+	}
+}
+
+
+static void *readOnlyThreadMain(void *arg) {
+	ReadOnlyThreadArgs *args = (ReadOnlyThreadArgs *) arg;
+
+	waitForThreadStart(args->startFlag);
+
+	for (int i = 0; i < args->iterations; i++) {
+		if (BlockingStack_size(args->stack) != args->expectedSize) {
+			args->failed = 1;
+		}
+
+		if (BlockingStack_isEmpty(args->stack) != args->expectedEmpty) {
+			args->failed = 1;
+		}
+	}
+
+	return NULL;
+}
+
+
+// Testing Basic Stack Operations //
 
 /*
  * Checks that the BlockingStack constructor returns a non-NULL pointer.
@@ -420,6 +460,8 @@ int multipleStacksIndependent() {
 	return TEST_SUCCESS;
 }
 
+// Testing Thread Safe Behaviour //
+
 /*
  * Checks that a pop blocks until another thread pushes an element.
  */
@@ -429,7 +471,6 @@ int popBlocksUntilPush() {
 	int value = 99;
 
 	ASSERT_INT_EQ(0, pthread_create(&thread, NULL, popThreadMain, &args));
-	usleep(THREAD_TEST_DELAY_US);
 	ASSERT_FALSE(args.completed);
 
 	ASSERT_TRUE(BlockingStack_push(stack, &value));
@@ -460,7 +501,6 @@ int pushBlocksUntilPop() {
 	args.result = false;
 
 	ASSERT_INT_EQ(0, pthread_create(&thread, NULL, pushThreadMain, &args));
-	usleep(THREAD_TEST_DELAY_US);
 	ASSERT_FALSE(args.completed);
 
 	ASSERT_PTR_EQ(&first, BlockingStack_pop(local_stack));
@@ -491,7 +531,6 @@ int multipleBlockedPoppersReceiveItems() {
 		ASSERT_INT_EQ(0, pthread_create(&threads[i], NULL, popThreadMain, &args[i]));
 	}
 
-	usleep(THREAD_TEST_DELAY_US);
 	ASSERT_FALSE(args[0].completed);
 	ASSERT_FALSE(args[1].completed);
 
@@ -529,7 +568,6 @@ int clearUnblocksWaitingPush() {
 	args.result = false;
 
 	ASSERT_INT_EQ(0, pthread_create(&thread, NULL, pushThreadMain, &args));
-	usleep(THREAD_TEST_DELAY_US);
 	ASSERT_FALSE(args.completed);
 
 	BlockingStack_clear(local_stack);
@@ -543,6 +581,80 @@ int clearUnblocksWaitingPush() {
 	BlockingStack_destroy(local_stack);
 	return TEST_SUCCESS;
 }
+
+
+/*
+ * Checks that concurrent readers safely observe an empty shared stack.
+ */
+int sizeAndIsEmptyAreSafeOnEmptyStack() {
+	pthread_t threads[READER_THREAD_COUNT];
+	ReadOnlyThreadArgs args[READER_THREAD_COUNT];
+	int startFlag = 0;
+
+	for (int i = 0; i < READER_THREAD_COUNT; i++) {
+		args[i].stack = stack;
+		args[i].startFlag = &startFlag;
+		args[i].iterations = READER_ITERATIONS;
+		args[i].expectedSize = 0;
+		args[i].expectedEmpty = true;
+		args[i].failed = 0;
+		ASSERT_INT_EQ(0, pthread_create(&threads[i], NULL, readOnlyThreadMain, &args[i]));
+	}
+
+	startFlag = 1;
+
+	for (int i = 0; i < READER_THREAD_COUNT; i++) {
+		ASSERT_INT_EQ(0, pthread_join(threads[i], NULL));
+		ASSERT_FALSE(args[i].failed);
+	}
+
+	ASSERT_INT_EQ(0, BlockingStack_size(stack));
+	ASSERT_TRUE(BlockingStack_isEmpty(stack));
+	return TEST_SUCCESS;
+}
+
+/*
+ * Checks that concurrent readers safely observe a non-empty shared stack.
+ */
+int sizeAndIsEmptyAreSafeOnNonEmptyStack() {
+	pthread_t threads[READER_THREAD_COUNT];
+	ReadOnlyThreadArgs args[READER_THREAD_COUNT];
+	int startFlag = 0;
+	int values[3] = {10, 20, 30};
+
+	for (int i = 0; i < 3; i++) {
+		ASSERT_TRUE(BlockingStack_push(stack, &values[i]));
+	}
+
+	for (int i = 0; i < READER_THREAD_COUNT; i++) {
+		args[i].stack = stack;
+		args[i].startFlag = &startFlag;
+		args[i].iterations = READER_ITERATIONS;
+		args[i].expectedSize = 3;
+		args[i].expectedEmpty = false;
+		args[i].failed = 0;
+		ASSERT_INT_EQ(0, pthread_create(&threads[i], NULL, readOnlyThreadMain, &args[i]));
+	}
+
+	startFlag = 1;
+
+	for (int i = 0; i < READER_THREAD_COUNT; i++) {
+		ASSERT_INT_EQ(0, pthread_join(threads[i], NULL));
+		ASSERT_FALSE(args[i].failed);
+	}
+
+	ASSERT_INT_EQ(3, BlockingStack_size(stack));
+	ASSERT_FALSE(BlockingStack_isEmpty(stack));
+
+	for (int i = 0; i < 3; i++) {
+		ASSERT_NOT_NULL(BlockingStack_pop(stack));
+	}
+
+	ASSERT_TRUE(BlockingStack_isEmpty(stack));
+	return TEST_SUCCESS;
+}
+
+
 
 /*
  * Main function for the BlockingStack tests which will run each user-defined test in turn.
@@ -572,7 +684,8 @@ int main() {
 	runTest("pushBlocksUntilPop", pushBlocksUntilPop);
 	runTest("multipleBlockedPoppersReceiveItems", multipleBlockedPoppersReceiveItems);
 	runTest("clearUnblocksWaitingPush", clearUnblocksWaitingPush);
-
+	runTest("sizeAndIsEmptyAreSafeOnEmptyStack", sizeAndIsEmptyAreSafeOnEmptyStack);
+	runTest("sizeAndIsEmptyAreSafeOnNonEmptyStack", sizeAndIsEmptyAreSafeOnNonEmptyStack);
 	printf("BlockingStack Tests complete: %d / %d tests successful.\n----------------\n", success_count, total_count);
 	return 0;
 }
