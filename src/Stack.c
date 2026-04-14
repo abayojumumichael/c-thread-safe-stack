@@ -40,13 +40,13 @@ Stack* new_Stack(int max_size) {
 
 
 bool Stack_push(Stack* this, void* element) {
-	if (this == NULL) {
+	if (!this) {
 		errno = EINVAL;
 		perror("Stack_push: NULL stack");
 		return false;
 	}
 
-	if (element == NULL) {
+	if (!element) {
 		errno = EINVAL;
 		perror("Stack_push: NULL element");
 		return false;
@@ -64,12 +64,12 @@ bool Stack_push(Stack* this, void* element) {
 
 
 void* Stack_pop(Stack* this) {
-	if (this == NULL) {
+	if (!this) {
 		errno = EINVAL;
 		perror("Stack_pop: NULL stack");
 		return NULL;
 	}
-	if (this->current_size == 0) {
+	if (Stack_isEmpty(this)) {
 		errno = EINVAL;
 		perror("Stack_pop: stack empty");
 		return NULL;
@@ -80,7 +80,7 @@ void* Stack_pop(Stack* this) {
 
 
 int Stack_size(Stack* this) {
-	if (this == NULL) {
+	if (!this) {
 		errno = EINVAL;
 		perror("Stack_size: NULL stack");
 		return 0;
@@ -91,7 +91,7 @@ int Stack_size(Stack* this) {
 
 
 bool Stack_isEmpty(Stack* this) {
-	if (this == NULL) {
+	if (!this) {
 		errno = EINVAL;
 		perror("Stack_isEmpty: NULL stack");
 		return true;
@@ -102,7 +102,7 @@ bool Stack_isEmpty(Stack* this) {
 
 
 void Stack_clear(Stack* this) {
-	if (this == NULL) {
+	if (!this) {
 		errno = EINVAL;
 		perror("Stack_clear: NULL stack");
 		return;
@@ -113,7 +113,7 @@ void Stack_clear(Stack* this) {
 
 
 void Stack_destroy(Stack* this) {
-	if (this == NULL) {
+	if (!this) {
 		errno = EINVAL;
 		perror("Stack_destroy: NULL stack");
 		return;
