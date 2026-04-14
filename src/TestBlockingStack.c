@@ -54,7 +54,10 @@ typedef struct {
 	void *result;
 } PopThreadArgs;
 
-
+/*
+ * Arguments passed to a reader thread that repeatedly checks
+ * size and empty-state on a shared stack.
+ */
 typedef struct {
 	BlockingStack *stack;
 	int *startFlag;
@@ -129,13 +132,18 @@ static void *popThreadMain(void *arg) {
 	return NULL;
 }
 
+/*
+ * Waits until the main test signals that worker threads may start.
+ */
 static void waitForThreadStart(int *startFlag) {
 	while (!(*startFlag)) {
 		usleep(THREAD_TEST_DELAY_US);
 	}
 }
 
-
+/*
+ * Thread entry point that repeatedly checks size and isEmpty.
+ */
 static void *readOnlyThreadMain(void *arg) {
 	ReadOnlyThreadArgs *args = (ReadOnlyThreadArgs *) arg;
 
