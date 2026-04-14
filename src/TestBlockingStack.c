@@ -33,6 +33,9 @@ typedef struct {
 	char name[50];
 } Person;
 
+/*
+ * Arguments passed to a helper thread that pushes one element.
+ */
 typedef struct {
 	BlockingStack *stack;
 	void *element;
@@ -40,6 +43,9 @@ typedef struct {
 	bool result;
 } PushThreadArgs;
 
+/*
+ * Arguments passed to a helper thread that pops one element.
+ */
 typedef struct {
 	BlockingStack *stack;
 	volatile int completed;
@@ -90,6 +96,9 @@ void runTest(const char *name, int (*testFunction)()) {
 }
 
 
+/*
+ * Thread entry point that attempts one push and records the outcome.
+ */
 static void *pushThreadMain(void *arg) {
 	PushThreadArgs *args = (PushThreadArgs *) arg;
 	args->result = BlockingStack_push(args->stack, args->element);
@@ -97,6 +106,9 @@ static void *pushThreadMain(void *arg) {
 	return NULL;
 }
 
+/*
+ * Thread entry point that performs one pop and stores the result.
+ */
 static void *popThreadMain(void *arg) {
 	PopThreadArgs *args = (PopThreadArgs *) arg;
 	args->result = BlockingStack_pop(args->stack);
