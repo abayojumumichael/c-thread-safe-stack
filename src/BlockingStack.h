@@ -9,17 +9,8 @@
 #define BLOCKING_STACK_H_
 
 #include <stdbool.h>
-#include <pthread.h>
-#include "Stack.h"
 
 typedef struct BlockingStack BlockingStack;
-
-struct BlockingStack {
-	Stack* stack;
-	pthread_mutex_t mutex;
-	pthread_cond_t not_empty;
-	pthread_cond_t not_full;
-};
 
 /*
  * Creates a new BlockingStack for at most max_size void* elements.

@@ -8,22 +8,49 @@
 #include "BlockingStack.h"
 
 #include <errno.h>
+#include <pthread.h>
+#include <semaphore.h>
 #include <stddef.h>
-#include <stdlib.h>
 #include <stdio.h>
+#include <stdlib.h>
 
+#include "Stack.h"
 
-BlockingStack *new_BlockingStack(int max_size) {
+struct BlockingStack {
+	Stack *stack;
+	pthread_mutex_t mutex;
+	sem_t items;
+	sem_t spaces;
+};
+
+static bool BlockingStack_lock(BlockingStack *this) {
+	if (pthread_mutex_lock(&this->mutex) != 0) {
+		perror("BlockingStack: pthread_mutex_lock");
+		return false;
+	}
+
+	return true;
+}
+
+static void BlockingStack_unlock(BlockingStack *this) {
+	if (pthread_mutex_unlock(&this->mutex) != 0) {
+		perror("BlockingStack: pthread_mutex_unlock");
+	}
+}
+
+BlockingStack* new_BlockingStack(int max_size) {
+	BlockingStack* blockingStack;
+
 	if (max_size <= 0) {
 		errno = EINVAL;
 		perror("new_BlockingStack: invalid max_size");
 		return NULL;
 	}
 
-	BlockingStack* blockingStack = malloc(sizeof(BlockingStack));
+	blockingStack = malloc(sizeof(BlockingStack));
 	if (!blockingStack) {
 		perror("new_BlockingStack: malloc blocking stack");
-		return NULL;		
+		return NULL;
 	}
 
 	blockingStack->stack = new_Stack(max_size);
@@ -32,21 +59,25 @@ BlockingStack *new_BlockingStack(int max_size) {
 		return NULL;
 	}
 
+
 	if (pthread_mutex_init(&blockingStack->mutex, NULL) != 0) {
+		perror("new_BlockingStack: pthread_mutex_init");
 		Stack_destroy(blockingStack->stack);
 		free(blockingStack);
 		return NULL;
 	}
 
-	if (pthread_cond_init(&blockingStack->not_empty, NULL) != 0) {
+	if (sem_init(&blockingStack->items, 0, 0) != 0) {
+		perror("new_BlockingStack: sem_init items");
 		pthread_mutex_destroy(&blockingStack->mutex);
 		Stack_destroy(blockingStack->stack);
 		free(blockingStack);
 		return NULL;
 	}
 
-	if (pthread_cond_init(&blockingStack->not_full, NULL) != 0) {
-		pthread_cond_destroy(&blockingStack->not_empty);
+	if (sem_init(&blockingStack->spaces, 0, (unsigned int) max_size) != 0) {
+		perror("new_BlockingStack: sem_init spaces");
+		sem_destroy(&blockingStack->items);
 		pthread_mutex_destroy(&blockingStack->mutex);
 		Stack_destroy(blockingStack->stack);
 		free(blockingStack);
@@ -56,112 +87,161 @@ BlockingStack *new_BlockingStack(int max_size) {
 	return blockingStack;
 }
 
+bool BlockingStack_push(BlockingStack *this, void *element) {
+	bool pushed;
 
-bool BlockingStack_push(BlockingStack* this, void* element) {
-	if (this == NULL) {
+	if (!this) {
 		errno = EINVAL;
 		perror("BlockingStack_push: NULL stack");
 		return false;
 	}
 
-	if (element == NULL) {
+	if (!element) {
 		errno = EINVAL;
 		perror("BlockingStack_push: NULL element");
 		return false;
 	}
 
-	pthread_mutex_lock(&this->mutex);
-
-	while (Stack_size(this->stack) >= this->stack->max_size) {
-		pthread_cond_wait(&this->not_full, &this->mutex);
+	if (sem_wait(&this->spaces) != 0) {
+		perror("BlockingStack_push: sem_wait spaces");
+		return false;
 	}
 
-	bool pushed = Stack_push(this->stack, element);
-	if (pushed) {
-		pthread_cond_signal(&this->not_empty);
+	if (!BlockingStack_lock(this)) {
+		sem_post(&this->spaces);
+		return false;
 	}
 
-	pthread_mutex_unlock(&this->mutex);
-	return pushed;
+	pushed = Stack_push(this->stack, element);
+	BlockingStack_unlock(this);
+
+	if (!pushed) {
+		sem_post(&this->spaces);
+		return false;
+	}
+
+	if (sem_post(&this->items) != 0) {
+		perror("BlockingStack_push: sem_post items");
+		return false;
+	}
+
+	return true;
 }
 
+void* BlockingStack_pop(BlockingStack *this) {
+	void* element;
 
-void* BlockingStack_pop(BlockingStack* this) {
-	if (this == NULL) {
+	if (!this) {
 		errno = EINVAL;
 		perror("BlockingStack_pop: NULL stack");
 		return NULL;
 	}
 
-	pthread_mutex_lock(&this->mutex);
-
-	while (Stack_size(this->stack) == 0) {
-		pthread_cond_wait(&this->not_empty, &this->mutex);
+	if (sem_wait(&this->items) != 0) {
+		perror("BlockingStack_pop: sem_wait items");
+		return NULL;
 	}
 
-	void* element = Stack_pop(this->stack);
-	pthread_cond_signal(&this->not_full);
-	
-	
-	pthread_mutex_unlock(&this->mutex);
+	if (!BlockingStack_lock(this)) {
+		sem_post(&this->items);
+		return NULL;
+	}
+
+	element = Stack_pop(this->stack);
+	BlockingStack_unlock(this);
+
+	if (!element) {
+		sem_post(&this->items);
+		return NULL;
+	}
+
+	if (sem_post(&this->spaces) != 0) {
+		perror("BlockingStack_pop: sem_post spaces");
+		return NULL;
+	}
+
 	return element;
 }
 
+int BlockingStack_size(BlockingStack *this) {
+	int size;
 
-int BlockingStack_size(BlockingStack* this) {
-	if (this == NULL) {
+	if (!this) {
 		errno = EINVAL;
 		perror("BlockingStack_size: NULL stack");
 		return 0;
 	}
 
-	pthread_mutex_lock(&this->mutex);
-	int size = Stack_size(this->stack);
-	pthread_mutex_unlock(&this->mutex);
+	if (!BlockingStack_lock(this)) {
+		return 0;
+	}
+
+	size = Stack_size(this->stack);
+	BlockingStack_unlock(this);
 
 	return size;
 }
 
+bool BlockingStack_isEmpty(BlockingStack *this) {
+	bool isEmpty;
 
-bool BlockingStack_isEmpty(BlockingStack* this) {
-	if (this == NULL) {
+	if (!this) {
 		errno = EINVAL;
 		perror("BlockingStack_isEmpty: NULL stack");
 		return true;
 	}
 
-	pthread_mutex_lock(&this->mutex);
-	bool isEmpty = Stack_isEmpty(this->stack);
-	pthread_mutex_unlock(&this->mutex);
+	if (!BlockingStack_lock(this)) {
+		return true;
+	}
+
+	isEmpty = Stack_isEmpty(this->stack);
+	BlockingStack_unlock(this);
 
 	return isEmpty;
 }
 
+void BlockingStack_clear(BlockingStack *this) {
+	int removed_count;
 
-void BlockingStack_clear(BlockingStack* this) {
-	if (this == NULL) {
+	if (!this) {
 		errno = EINVAL;
 		perror("BlockingStack_clear: NULL stack");
 		return;
 	}
 
-	pthread_mutex_lock(&this->mutex);
+	if (!BlockingStack_lock(this)) {
+		return;
+	}
+
+	removed_count = Stack_size(this->stack);
 	Stack_clear(this->stack);
-	pthread_cond_broadcast(&this->not_full);
-	pthread_mutex_unlock(&this->mutex);
+	BlockingStack_unlock(this);
+
+	while (removed_count > 0) {
+		if (sem_trywait(&this->items) != 0) {
+			break;
+		}
+
+		if (sem_post(&this->spaces) != 0) {
+			perror("BlockingStack_clear: sem_post spaces");
+			break;
+		}
+
+		removed_count--;
+	}
 }
 
-
-void BlockingStack_destroy(BlockingStack* this) {
-	if (this == NULL) {
+void BlockingStack_destroy(BlockingStack *this) {
+	if (!this) {
 		errno = EINVAL;
 		perror("BlockingStack_destroy: NULL stack");
 		return;
 	}
-	
-	Stack_destroy(this->stack);
-	pthread_cond_destroy(&this->not_full);
-	pthread_cond_destroy(&this->not_empty);
+
+	sem_destroy(&this->spaces);
+	sem_destroy(&this->items);
 	pthread_mutex_destroy(&this->mutex);
-	free(this);	
+	Stack_destroy(this->stack);
+	free(this);
 }
