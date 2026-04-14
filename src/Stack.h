@@ -12,14 +12,6 @@
 
 typedef struct Stack Stack;
 
-struct Stack {
-    void** elements;    // dynamic array of void* items
-    int max_size;       // capacity
-    int current_size;   // number of items currently in the stack
-};
-
-
-
 /*
  * Creates a new Stack for at most max_size void* elements.
  * Returns a pointer to valid Stack* on success and NULL on failure.

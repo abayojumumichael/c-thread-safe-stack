@@ -12,6 +12,11 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+struct Stack {
+    void** elements;    // dynamic array of void* items
+    int max_size;       // capacity
+    int current_size;   // number of items currently in the stack
+};
 
 Stack* new_Stack(int max_size) {
 	if (max_size <= 0) {
